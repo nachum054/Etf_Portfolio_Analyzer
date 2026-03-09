@@ -1,4 +1,4 @@
-# ETF Portfolio Analyzer
+# PortfolioLens
 
 A Streamlit web app that analyzes your ETF portfolio at two levels:
 - **ETF level** — weight and value of each ETF you hold
