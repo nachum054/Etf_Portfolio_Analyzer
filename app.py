@@ -1,5 +1,6 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
+from utils.price_fetcher import get_prices, build_portfolio_summary
 
 # Configures the Streamlit page settings
 st.set_page_config(
@@ -133,7 +134,7 @@ st.markdown("""
             background-color: #0284c7;
         }
 
-        /* File uploader — navy styled */
+        /* File uploader - navy styled */
         [data-testid="stFileUploader"] section {
             background-color: #1e3a5f !important;
             border: 2px dashed #60a5fa !important;
@@ -228,6 +229,66 @@ st.divider()
 
 # Triggers the portfolio analysis
 analyze_button = st.button("🔍 Analyze Portfolio", type="primary", use_container_width=True)
+
+if analyze_button:
+    # Shows a visual cue to scroll down
+    st.markdown("""
+        <div style="
+            background-color: #162d4a;
+            border: 1px solid #0ea5e9;
+            border-radius: 8px;
+            padding: 0.75rem;
+            text-align: center;
+            color: #0ea5e9;
+            font-weight: 700;
+            font-size: 1rem;
+        ">
+            ⬇️ Results are ready - scroll down to view
+        </div>
+    """, unsafe_allow_html=True)
+
+
+    # Filters out empty rows
+    valid_rows = [
+        row for row in st.session_state.portfolio_rows
+        if row["ticker"].strip() and row["quantity"] > 0
+    ]
+
+    if not valid_rows:
+        st.warning("Please enter at least one ticker and quantity before analyzing.")
+    else:
+        with st.spinner("Fetching live prices..."):
+            # Extracts the list of tickers
+            tickers = [row["ticker"].upper().strip() for row in valid_rows]
+
+            # Fetches current prices for all tickers
+            prices = get_prices(tickers)
+
+            # Builds the portfolio summary DataFrame
+            summary_df = build_portfolio_summary(valid_rows, prices)
+
+        if summary_df.empty:
+            st.error("Could not fetch prices for any of the tickers. Please check your input.")
+        else:
+            st.divider()
+
+            # Displays the Level 1 ETF summary section
+            st.markdown('<div class="card-title">📊 Portfolio Summary</div>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#94a3b8; margin-bottom:1rem;">Shows the weight and value of each ETF or stock you hold directly. Scroll down for Level 2 - your real underlying stock exposure.</p>', unsafe_allow_html=True)
+
+            # Calculates and displays total portfolio value by parsing formatted strings
+            raw_total = sum(
+                float(v.replace("$", "").replace(",", ""))
+                for v in summary_df["Value ($)"]
+                if v != "N/A"
+            )
+            st.metric(label="Total Portfolio Value", value=f"${raw_total:,.2f}")
+
+            st.dataframe(
+                summary_df,
+                use_container_width=True,
+                hide_index=True
+            )
 
 # Renders the legal disclaimer footer
 st.markdown("""
