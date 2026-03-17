@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from utils.price_fetcher import get_prices, build_portfolio_summary
 from utils.currency_fetcher import (
     SUPPORTED_CURRENCIES,
@@ -11,6 +12,10 @@ from utils.currency_fetcher import (
 from utils.holdings_fetcher import (
     build_equity_holdings,
     parse_value,
+)
+from utils.sector_fetcher import (
+    build_sector_allocation,
+    build_asset_class_allocation,
 )
 
 # -- Page configuration ------------------------------------------------------
@@ -164,7 +169,6 @@ analyze_clicked = st.button(
 
 # -- Results -----------------------------------------------------------------
 if analyze_clicked:
-    # Normalizes tickers to uppercase and strips whitespace before any processing
     holdings = [
         {"ticker": r["ticker"].upper().strip(), "quantity": r["quantity"]}
         for r in st.session_state.rows
@@ -179,7 +183,6 @@ if analyze_clicked:
         with st.spinner("Fetching live prices..."):
             prices = get_prices(tickers)
 
-        # Blocks analysis if any ticker price could not be fetched
         failed = [t for t in tickers if prices.get(t) is None]
         if failed:
             st.error(
@@ -188,17 +191,14 @@ if analyze_clicked:
             )
             st.stop()
 
-        # Builds the Level 1 summary DataFrame
         summary_df = build_portfolio_summary(holdings, prices)
 
-        # Calculates total USD value
         total_usd = sum(
             parse_value(v)
             for v in summary_df["Value ($)"]
             if v != "N/A"
         )
 
-        # Fetches exchange rate if a non-USD currency is selected
         rate = None
         symbol = get_currency_symbol(selected_currency)
         if selected_currency != "USD":
@@ -208,10 +208,10 @@ if analyze_clicked:
         # -- Tabs ------------------------------------------------------------
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📊 Portfolio Summary",
-            "🔬 Stock Breakdown",
             "🏭 Sectors",
+            "🏦 Asset Classes",
+            "🔬 Stock Breakdown",
             "🔁 Overlap",
-            "🔮 What-If",
         ])
 
         # -- Tab 1: Portfolio Summary ----------------------------------------
@@ -243,20 +243,163 @@ if analyze_clicked:
                     for v in raw_values
                 ]
 
-            # Calculates table height to show all rows without internal scrolling
-            row_height = 35
-            header_height = 38
-            table_height = len(display_df) * row_height + header_height
+            table_height = len(display_df) * 35 + 38
+            st.dataframe(display_df, use_container_width=True, hide_index=True, height=table_height)
 
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True,
-                height=table_height,
-            )
-
-        # -- Tab 2: Stock Breakdown ------------------------------------------
+        # -- Tab 2: Sectors --------------------------------------------------
         with tab2:
+            with st.spinner("Fetching sector data..."):
+                sector_df = build_sector_allocation(summary_df)
+
+            st.markdown('<div class="card-title">🏭 Equity Sector Allocation</div>', unsafe_allow_html=True)
+
+            if sector_df.empty:
+                st.info("No sector data available for equity holdings in your portfolio.")
+            else:
+                # Pie chart - percent labels inside, bold black font, legend on right
+                fig_pie = px.pie(
+                    sector_df,
+                    names="Sector",
+                    values="Allocation (%)",
+                    color_discrete_sequence=px.colors.qualitative.Set3,
+                )
+                fig_pie.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#94a3b8",
+                    height=600,
+                    showlegend=True,
+                    margin=dict(t=20, b=20, l=20, r=200),
+                    legend=dict(
+                        font=dict(color="#ffffff", size=12),
+                        bgcolor="rgba(0,0,0,0)",
+                        orientation="v",
+                        yanchor="middle",
+                        y=0.5,
+                        xanchor="left",
+                        x=1.02,
+                    ),
+                )
+                fig_pie.update_traces(
+                    textinfo="percent",
+                    textposition="inside",
+                    insidetextorientation="horizontal",
+                    hovertemplate="<b>%{label}</b><br>%{value:.1f}%<extra></extra>",
+                    textfont=dict(size=12, color="black", family="Arial Black"),
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+                # Horizontal bar chart
+                fig_bar = px.bar(
+                    sector_df,
+                    x="Allocation (%)",
+                    y="Sector",
+                    orientation="h",
+                    text=sector_df["Allocation (%)"].apply(lambda x: f"{x:.1f}%"),
+                    color="Sector",
+                    color_discrete_sequence=px.colors.qualitative.Set3,
+                )
+                fig_bar.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#94a3b8",
+                    showlegend=False,
+                    height=400,
+                    margin=dict(t=20, b=20, l=20, r=80),
+                    xaxis=dict(gridcolor="#1e3a5f", ticksuffix="%"),
+                    yaxis=dict(gridcolor="#1e3a5f", categoryorder="total ascending"),
+                )
+                fig_bar.update_traces(
+                    textposition="outside",
+                    textfont=dict(color="#94a3b8"),
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # Sector table
+                sector_display = sector_df.copy()
+                sector_display["Allocation ($)"] = sector_display["Allocation ($)"].apply(lambda x: f"${x:,.2f}")
+                sector_display["Allocation (%)"] = sector_display["Allocation (%)"].apply(lambda x: f"{x:.1f}%")
+                table_height = len(sector_display) * 35 + 38
+                st.dataframe(sector_display, use_container_width=True, hide_index=True, height=table_height)
+
+        # -- Tab 3: Asset Classes --------------------------------------------
+        with tab3:
+            with st.spinner("Fetching asset class data..."):
+                asset_df = build_asset_class_allocation(summary_df)
+
+            st.markdown('<div class="card-title">🏦 Asset Class Breakdown</div>', unsafe_allow_html=True)
+
+            if asset_df.empty:
+                st.info("No asset class data available.")
+            else:
+                # Pie chart - percent labels inside, bold black font, legend on right
+                fig_asset_pie = px.pie(
+                    asset_df,
+                    names="Asset Class",
+                    values="Allocation (%)",
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_asset_pie.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#94a3b8",
+                    height=600,
+                    showlegend=True,
+                    margin=dict(t=20, b=20, l=20, r=200),
+                    legend=dict(
+                        font=dict(color="#ffffff", size=12),
+                        bgcolor="rgba(0,0,0,0)",
+                        orientation="v",
+                        yanchor="middle",
+                        y=0.5,
+                        xanchor="left",
+                        x=1.02,
+                    ),
+                )
+                fig_asset_pie.update_traces(
+                    textinfo="percent",
+                    textposition="inside",
+                    insidetextorientation="horizontal",
+                    hovertemplate="<b>%{label}</b><br>%{value:.1f}%<extra></extra>",
+                    textfont=dict(size=12, color="black", family="Arial Black"),
+                )
+                st.plotly_chart(fig_asset_pie, use_container_width=True)
+
+                # Horizontal bar chart
+                fig_asset_bar = px.bar(
+                    asset_df,
+                    x="Allocation (%)",
+                    y="Asset Class",
+                    orientation="h",
+                    text=asset_df["Allocation (%)"].apply(lambda x: f"{x:.1f}%"),
+                    color="Asset Class",
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_asset_bar.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#94a3b8",
+                    showlegend=False,
+                    height=400,
+                    margin=dict(t=20, b=20, l=20, r=80),
+                    xaxis=dict(gridcolor="#1e3a5f", ticksuffix="%"),
+                    yaxis=dict(gridcolor="#1e3a5f", categoryorder="total ascending"),
+                )
+                fig_asset_bar.update_traces(
+                    textposition="outside",
+                    textfont=dict(color="#94a3b8"),
+                )
+                st.plotly_chart(fig_asset_bar, use_container_width=True)
+
+                # Asset class table
+                asset_display = asset_df.copy()
+                asset_display["Allocation ($)"] = asset_display["Allocation ($)"].apply(lambda x: f"${x:,.2f}")
+                asset_display["Allocation (%)"] = asset_display["Allocation (%)"].apply(lambda x: f"{x:.1f}%")
+                table_height = len(asset_display) * 35 + 38
+                st.dataframe(asset_display, use_container_width=True, hide_index=True, height=table_height)
+
+        # -- Tab 4: Stock Breakdown ------------------------------------------
+        with tab4:
             with st.spinner("Fetching holdings data..."):
                 equity_df = build_equity_holdings(summary_df)
 
@@ -265,58 +408,38 @@ if analyze_clicked:
             if equity_df.empty:
                 st.info("No equity holdings found in your portfolio.")
             else:
-                # Sorts by exposure descending
                 equity_df = equity_df.sort_values(
                     "Exposure ($)", ascending=False
                 ).reset_index(drop=True)
 
-                # Calculates each stock's % of total portfolio
                 equity_df["% of Portfolio"] = equity_df["Exposure ($)"].apply(
                     lambda x: f"{(x / total_usd) * 100:.2f}%"
                 )
 
-                # Calculates total coverage of displayed holdings
                 coverage_pct = (equity_df["Exposure ($)"].sum() / total_usd) * 100
-
-                # Shows styled note above table
                 remaining_pct = 100 - coverage_pct
+
                 st.markdown(
                     f'<div style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.75rem;">'
                     f'ℹ️ This analysis is based on the top 10 holdings of each ETF, which together represent '
                     f'<strong style="color:#60a5fa;">{coverage_pct:.1f}%</strong> '
-                    f'of your total portfolio.</div>',
+                    f'of your total portfolio. The remaining '
+                    f'<strong style="color:#60a5fa;">{remaining_pct:.1f}%</strong> '
+                    f'is not shown.</div>',
                     unsafe_allow_html=True,
                 )
 
-                # Formats exposure column for display
                 equity_display = equity_df.copy()
                 equity_display["Exposure ($)"] = equity_display["Exposure ($)"].apply(
                     lambda x: f"${x:,.2f}"
                 )
 
-                # Calculates table height to show all rows without internal scrolling
-                row_height = 35
-                header_height = 38
-                table_height = len(equity_display) * row_height + header_height
+                table_height = len(equity_display) * 35 + 38
+                st.dataframe(equity_display, use_container_width=True, hide_index=True, height=table_height)
 
-                st.dataframe(
-                    equity_display,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=table_height,
-                )
-
-        # -- Tab 3: Sectors --------------------------------------------------
-        with tab3:
-            st.markdown('<div class="coming-soon">🚧 Sector allocation charts coming in Step 4.</div>', unsafe_allow_html=True)
-
-        # -- Tab 4: Overlap --------------------------------------------------
-        with tab4:
-            st.markdown('<div class="coming-soon">🚧 Overlap detection coming in Step 5.</div>', unsafe_allow_html=True)
-
-        # -- Tab 5: What-If --------------------------------------------------
+        # -- Tab 5: Overlap --------------------------------------------------
         with tab5:
-            st.markdown('<div class="coming-soon">🚧 What-If simulator coming in Step 6.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="coming-soon">🚧 Overlap detection coming in Step 5.</div>', unsafe_allow_html=True)
 
 # -- Legal disclaimer --------------------------------------------------------
 st.markdown("""
