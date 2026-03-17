@@ -1,299 +1,327 @@
-import pandas as pd
-import streamlit as st
-from utils.price_fetcher import get_prices, build_portfolio_summary
+# Main entry point for the PortfolioLens Streamlit application
 
-# Configures the Streamlit page settings
-st.set_page_config(
-    page_title="PortfolioLens",
-    page_icon="📈",
-    layout="wide"
+import streamlit as st
+import pandas as pd
+from utils.price_fetcher import get_prices, build_portfolio_summary
+from utils.currency_fetcher import (
+    SUPPORTED_CURRENCIES,
+    get_exchange_rate,
+    get_currency_symbol,
+)
+from utils.holdings_fetcher import (
+    build_equity_holdings,
+    parse_value,
 )
 
-# Injects custom CSS for a navy finance dashboard with proper contrast
+# -- Page configuration ------------------------------------------------------
+st.set_page_config(
+    page_title="PortfolioLens",
+    page_icon="🔍",
+    layout="wide",
+)
+
+# -- Custom CSS styling -------------------------------------------------------
 st.markdown("""
-    <style>
-        /* Main background */
-        .stApp {
-            background-color: #0f2341;
-            color: #e8edf5;
-        }
+<style>
+    .stApp { background-color: #0f2341; }
 
-        /* Page padding */
-        .block-container {
-            padding: 2rem 4rem;
-        }
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #60a5fa;
+        margin-bottom: 0.25rem;
+        text-align: center;
+    }
 
-        /* Main title */
-        h1 {
-            text-align: center;
-            color: #ffffff;
-            font-size: 2.5rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
+    .sub-title {
+        font-size: 1rem;
+        color: #94a3b8;
+        margin-bottom: 2rem;
+        text-align: center;
+    }
 
-        /* Subtitle */
-        .subtitle {
-            text-align: center;
-            color: #94a3b8;
-            font-size: 1rem;
-            margin-bottom: 1rem;
-        }
+    .card-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #60a5fa;
+        margin-bottom: 1rem;
+    }
 
-        /* Card section header */
-        .card-title {
-            color: #60a5fa;
-            font-size: 1rem;
-            font-weight: 700;
-            padding-bottom: 0.75rem;
-            margin-bottom: 0.5rem;
-            border-bottom: 1px solid #2a4a6e;
-        }
+    .disclaimer {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        text-align: center;
+        margin-top: 2rem;
+        padding: 1rem;
+        border-top: 1px solid #1e3a5f;
+    }
 
-        /* Column headers */
-        .col-header {
-            color: #e2e8f0;
-            font-size: 0.9rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            margin-bottom: 0.25rem;
-        }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #94a3b8;
+        padding: 0.5rem 1.25rem;
+    }
 
-        /* Card container styling via Streamlit container */
-        [data-testid="stVerticalBlockBorderWrapper"] {
-            background-color: #162d4a !important;
-            border: 1px solid #2a4a6e !important;
-            border-radius: 12px !important;
-            padding: 1.5rem !important;
-            margin-bottom: 1.5rem !important;
-        }
+    .stTabs [aria-selected="true"] {
+        color: #60a5fa !important;
+        border-bottom: 2px solid #60a5fa !important;
+    }
 
-        /* Text input */
-        .stTextInput input {
-            background-color: #1e3a5f !important;
-            border: 1px solid #2a4a6e !important;
-            border-radius: 6px !important;
-            color: #ffffff !important;
-            font-size: 0.95rem !important;
-        }
+    .coming-soon {
+        color: #64748b;
+        font-size: 0.95rem;
+        padding: 2rem 0;
+    }
 
-        /* Placeholder text */
-        .stTextInput input::placeholder {
-            color: #6b8cae !important;
-            opacity: 1 !important;
-        }
+    input:focus, select:focus, textarea:focus {
+        outline: 2px solid #60a5fa !important;
+        outline-offset: 2px !important;
+    }
 
-        .stTextInput input:focus {
-            border-color: #60a5fa !important;
-            box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2) !important;
-        }
-
-        /* Number input */
-        .stNumberInput input {
-            background-color: #1e3a5f !important;
-            border: 1px solid #2a4a6e !important;
-            border-radius: 6px !important;
-            color: #ffffff !important;
-        }
-
-        /* Number input +/- buttons */
-        .stNumberInput button {
-            background-color: #1e3a5f !important;
-            color: #60a5fa !important;
-            border: 1px solid #2a4a6e !important;
-        }
-
-        /* Regular buttons */
-        .stButton > button {
-            background-color: #1e3a5f;
-            color: #60a5fa;
-            border: 1px solid #2a4a6e;
-            border-radius: 6px;
-            font-weight: 600;
-        }
-
-        .stButton > button:hover {
-            background-color: #2563eb;
-            color: #ffffff;
-            border-color: #2563eb;
-        }
-
-        /* Primary analyze button */
-        .stButton > button[kind="primary"] {
-            background-color: #0ea5e9;
-            color: #ffffff;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-
-        .stButton > button[kind="primary"]:hover {
-            background-color: #0284c7;
-        }
-
-        /* File uploader - navy styled */
-        [data-testid="stFileUploader"] section {
-            background-color: #1e3a5f !important;
-            border: 2px dashed #60a5fa !important;
-            border-radius: 10px !important;
-        }
-
-        [data-testid="stFileUploaderDropzoneInstructions"] * {
-            color: #94a3b8 !important;
-        }
-
-        [data-testid="stFileUploader"] button {
-            background-color: #1e3a5f !important;
-            color: #60a5fa !important;
-            border: 1px solid #2a4a6e !important;
-            border-radius: 6px !important;
-        }
-
-        /* Divider */
-        hr {
-            border-color: #2a4a6e;
-            margin: 2rem 0;
-        }
-
-        /* Disclaimer footer */
-        .disclaimer {
-            text-align: center;
-            color: #94a3b8;
-            font-size: 0.85rem;
-            margin-top: 2rem;
-            padding-top: 1rem;
-            border-top: 1px solid #2a4a6e;
-        }
-    </style>
+    button:focus {
+        outline: 2px solid #60a5fa !important;
+        outline-offset: 2px !important;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-# Renders the centered title and subtitle
-st.markdown("<h1>📈 PortfolioLens</h1>", unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Analyze your real portfolio exposure - ETFs and individual stocks supported.</p>', unsafe_allow_html=True)
+# -- App header --------------------------------------------------------------
+st.markdown('<div class="main-title">🔍 PortfolioLens</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="sub-title">Analyze your ETF portfolio - see what you really own</div>',
+    unsafe_allow_html=True,
+)
 
-st.divider()
-
-# Renders the manual entry card using a Streamlit container
+# -- Manual entry card -------------------------------------------------------
 with st.container(border=True):
     st.markdown('<div class="card-title">📋 Manual Entry</div>', unsafe_allow_html=True)
 
-    # Initializes the portfolio rows in session state if not already set
-    if "portfolio_rows" not in st.session_state:
-        st.session_state.portfolio_rows = [{"ticker": "", "quantity": 0.0}]
+    if "rows" not in st.session_state:
+        st.session_state.rows = [{"ticker": "", "quantity": 0.0}]
 
-    # Renders the column headers
-    col1, col2, col3 = st.columns([2, 2, 1])
-    col1.markdown('<p class="col-header">Ticker</p>', unsafe_allow_html=True)
-    col2.markdown('<p class="col-header">Quantity</p>', unsafe_allow_html=True)
-    col3.markdown('<p class="col-header">Remove</p>', unsafe_allow_html=True)
+    for i, row in enumerate(st.session_state.rows):
+        col1, col2, col3 = st.columns([3, 3, 1])
+        with col1:
+            st.session_state.rows[i]["ticker"] = st.text_input(
+                "Ticker",
+                value=row["ticker"],
+                key=f"ticker_{i}",
+                placeholder="e.g. SPY",
+            ).upper()
+        with col2:
+            st.session_state.rows[i]["quantity"] = st.number_input(
+                "Quantity",
+                value=row["quantity"],
+                min_value=0.0,
+                step=1.0,
+                key=f"qty_{i}",
+            )
+        with col3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("✕", key=f"remove_{i}", help="Remove this row") and len(st.session_state.rows) > 1:
+                st.session_state.rows.pop(i)
+                st.rerun()
 
-    # Renders a row for each holding in the portfolio
-    for i, row in enumerate(st.session_state.portfolio_rows):
-        col1, col2, col3 = st.columns([2, 2, 1])
-        st.session_state.portfolio_rows[i]["ticker"] = col1.text_input(
-            "Ticker", value=row["ticker"], key=f"ticker_{i}",
-            label_visibility="collapsed", placeholder="e.g. SPY, AAPL"
-        )
-        st.session_state.portfolio_rows[i]["quantity"] = col2.number_input(
-            "Quantity", value=row["quantity"], min_value=0.0, key=f"qty_{i}",
-            label_visibility="collapsed"
-        )
-        if col3.button("🗑️ Remove", key=f"delete_{i}"):
-            st.session_state.portfolio_rows.pop(i)
-            st.rerun()
-
-    # Adds a new empty row to the portfolio
-    if st.button("➕ Add Row"):
-        st.session_state.portfolio_rows.append({"ticker": "", "quantity": 0.0})
-        st.rerun()
-
-    # Adds spacing below the Add Row button
-    st.markdown("<br>", unsafe_allow_html=True)
-
-# Renders the screenshot upload card using a Streamlit container
-with st.container(border=True):
-    st.markdown('<div class="card-title">📸 Upload a Screenshot</div>', unsafe_allow_html=True)
-    st.markdown('<p style="color:#94a3b8; margin-bottom:0.75rem;">Upload a screenshot of your broker portfolio - AI will extract the tickers and quantities automatically.</p>', unsafe_allow_html=True)
-
-    # Renders the styled file uploader
-    uploaded_image = st.file_uploader(
-        "Upload screenshot",
-        type=["png", "jpg", "jpeg"],
-        label_visibility="collapsed"
+    st.button(
+        "+ Add Row",
+        key="add_row",
+        on_click=lambda: st.session_state.rows.append({"ticker": "", "quantity": 0.0}),
     )
 
-st.divider()
+# -- Currency selector card --------------------------------------------------
+with st.container(border=True):
+    st.markdown('<div class="card-title">💱 Display Currency</div>', unsafe_allow_html=True)
 
-# Triggers the portfolio analysis
-analyze_button = st.button("🔍 Analyze Portfolio", type="primary", use_container_width=True)
+    currency_options = [f"{code} - {name}" for code, name in SUPPORTED_CURRENCIES.items()]
+    selected_option = st.selectbox(
+        "Select your preferred currency for portfolio valuation (type to search)",
+        options=currency_options,
+        index=0,
+    )
+    selected_currency = selected_option.split(" - ")[0]
 
-if analyze_button:
-    # Shows a visual cue to scroll down
-    st.markdown("""
-        <div style="
-            background-color: #162d4a;
-            border: 1px solid #0ea5e9;
-            border-radius: 8px;
-            padding: 0.75rem;
-            text-align: center;
-            color: #0ea5e9;
-            font-weight: 700;
-            font-size: 1rem;
-        ">
-            ⬇️ Results are ready - scroll down to view
-        </div>
-    """, unsafe_allow_html=True)
+# -- Screenshot upload card --------------------------------------------------
+with st.container(border=True):
+    st.markdown('<div class="card-title">📸 Upload Screenshot</div>', unsafe_allow_html=True)
+    st.file_uploader(
+        "Upload a screenshot of your portfolio and we'll extract the tickers automatically",
+        type=["png", "jpg", "jpeg"],
+        key="screenshot",
+    )
+    st.caption("🚧 AI extraction coming soon")
 
+# -- Keyboard shortcut hint --------------------------------------------------
+st.caption("💡 Tip: Tab through all fields, then press Tab + Enter to analyze")
 
-    # Filters out empty rows
-    valid_rows = [
-        row for row in st.session_state.portfolio_rows
-        if row["ticker"].strip() and row["quantity"] > 0
+# -- Analyze button ----------------------------------------------------------
+analyze_clicked = st.button(
+    "🔍 Analyze Portfolio",
+    type="primary",
+    use_container_width=True,
+    help="Press Tab to reach this button, then Enter to run the analysis",
+)
+
+# -- Results -----------------------------------------------------------------
+if analyze_clicked:
+    # Normalizes tickers to uppercase and strips whitespace before any processing
+    holdings = [
+        {"ticker": r["ticker"].upper().strip(), "quantity": r["quantity"]}
+        for r in st.session_state.rows
+        if r["ticker"].strip() and r["quantity"] > 0
     ]
 
-    if not valid_rows:
+    if not holdings:
         st.warning("Please enter at least one ticker and quantity before analyzing.")
     else:
-        with st.spinner("Fetching live prices..."):
-            # Extracts the list of tickers
-            tickers = [row["ticker"].upper().strip() for row in valid_rows]
+        tickers = [r["ticker"] for r in holdings]
 
-            # Fetches current prices for all tickers
+        with st.spinner("Fetching live prices..."):
             prices = get_prices(tickers)
 
-            # Builds the portfolio summary DataFrame
-            summary_df = build_portfolio_summary(valid_rows, prices)
-
-        if summary_df.empty:
-            st.error("Could not fetch prices for any of the tickers. Please check your input.")
-        else:
-            st.divider()
-
-            # Displays the Level 1 ETF summary section
-            st.markdown('<div class="card-title">📊 Portfolio Summary</div>', unsafe_allow_html=True)
-            st.markdown('<p style="color:#94a3b8; margin-bottom:1rem;">Shows the weight and value of each ETF or stock you hold directly. Scroll down for Level 2 - your real underlying stock exposure.</p>', unsafe_allow_html=True)
-
-            # Calculates and displays total portfolio value by parsing formatted strings
-            raw_total = sum(
-                float(v.replace("$", "").replace(",", ""))
-                for v in summary_df["Value ($)"]
-                if v != "N/A"
+        # Blocks analysis if any ticker price could not be fetched
+        failed = [t for t in tickers if prices.get(t) is None]
+        if failed:
+            st.error(
+                f"Could not fetch prices for: {', '.join(failed)}. "
+                f"Please check the ticker symbol and try again."
             )
-            st.metric(label="Total Portfolio Value", value=f"${raw_total:,.2f}")
+            st.stop()
+
+        # Builds the Level 1 summary DataFrame
+        summary_df = build_portfolio_summary(holdings, prices)
+
+        # Calculates total USD value
+        total_usd = sum(
+            parse_value(v)
+            for v in summary_df["Value ($)"]
+            if v != "N/A"
+        )
+
+        # Fetches exchange rate if a non-USD currency is selected
+        rate = None
+        symbol = get_currency_symbol(selected_currency)
+        if selected_currency != "USD":
+            with st.spinner(f"Fetching {selected_currency} exchange rate..."):
+                rate = get_exchange_rate(selected_currency)
+
+        # -- Tabs ------------------------------------------------------------
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📊 Portfolio Summary",
+            "🔬 Stock Breakdown",
+            "🏭 Sectors",
+            "🔁 Overlap",
+            "🔮 What-If",
+        ])
+
+        # -- Tab 1: Portfolio Summary ----------------------------------------
+        with tab1:
+            if selected_currency != "USD" and rate:
+                total_converted = total_usd * rate
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("💼 Total Portfolio Value (USD)", f"${total_usd:,.2f}")
+                with col2:
+                    st.metric(
+                        f"💼 Total Portfolio Value ({selected_currency})",
+                        f"{symbol}{total_converted:,.2f}",
+                    )
+            else:
+                st.metric("💼 Total Portfolio Value (USD)", f"${total_usd:,.2f}")
+
+            st.markdown("---")
+
+            display_df = summary_df.copy()
+
+            if selected_currency != "USD" and rate:
+                raw_values = [
+                    parse_value(v) if v != "N/A" else None
+                    for v in display_df["Value ($)"]
+                ]
+                display_df[f"Value ({selected_currency})"] = [
+                    f"{symbol}{v * rate:,.2f}" if v is not None else "N/A"
+                    for v in raw_values
+                ]
+
+            # Calculates table height to show all rows without internal scrolling
+            row_height = 35
+            header_height = 38
+            table_height = len(display_df) * row_height + header_height
 
             st.dataframe(
-                summary_df,
+                display_df,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                height=table_height,
             )
 
-# Renders the legal disclaimer footer
+        # -- Tab 2: Stock Breakdown ------------------------------------------
+        with tab2:
+            with st.spinner("Fetching holdings data..."):
+                equity_df = build_equity_holdings(summary_df)
+
+            st.markdown('<div class="card-title">📈 Equity Holdings</div>', unsafe_allow_html=True)
+
+            if equity_df.empty:
+                st.info("No equity holdings found in your portfolio.")
+            else:
+                # Sorts by exposure descending
+                equity_df = equity_df.sort_values(
+                    "Exposure ($)", ascending=False
+                ).reset_index(drop=True)
+
+                # Calculates each stock's % of total portfolio
+                equity_df["% of Portfolio"] = equity_df["Exposure ($)"].apply(
+                    lambda x: f"{(x / total_usd) * 100:.2f}%"
+                )
+
+                # Calculates total coverage of displayed holdings
+                coverage_pct = (equity_df["Exposure ($)"].sum() / total_usd) * 100
+
+                # Shows styled note above table
+                remaining_pct = 100 - coverage_pct
+                st.markdown(
+                    f'<div style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.75rem;">'
+                    f'ℹ️ This analysis is based on the top 10 holdings of each ETF, which together represent '
+                    f'<strong style="color:#60a5fa;">{coverage_pct:.1f}%</strong> '
+                    f'of your total portfolio.</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Formats exposure column for display
+                equity_display = equity_df.copy()
+                equity_display["Exposure ($)"] = equity_display["Exposure ($)"].apply(
+                    lambda x: f"${x:,.2f}"
+                )
+
+                # Calculates table height to show all rows without internal scrolling
+                row_height = 35
+                header_height = 38
+                table_height = len(equity_display) * row_height + header_height
+
+                st.dataframe(
+                    equity_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=table_height,
+                )
+
+        # -- Tab 3: Sectors --------------------------------------------------
+        with tab3:
+            st.markdown('<div class="coming-soon">🚧 Sector allocation charts coming in Step 4.</div>', unsafe_allow_html=True)
+
+        # -- Tab 4: Overlap --------------------------------------------------
+        with tab4:
+            st.markdown('<div class="coming-soon">🚧 Overlap detection coming in Step 5.</div>', unsafe_allow_html=True)
+
+        # -- Tab 5: What-If --------------------------------------------------
+        with tab5:
+            st.markdown('<div class="coming-soon">🚧 What-If simulator coming in Step 6.</div>', unsafe_allow_html=True)
+
+# -- Legal disclaimer --------------------------------------------------------
 st.markdown("""
-    <div class="disclaimer">
-        PortfolioLens is for informational purposes only and does not constitute financial advice.
-        Always consult a qualified financial advisor before making investment decisions.
-    </div>
+<div class="disclaimer">
+    PortfolioLens is for informational purposes only and does not constitute financial advice.
+    Data is provided as-is. Always consult a qualified financial advisor before making investment decisions.
+</div>
 """, unsafe_allow_html=True)
